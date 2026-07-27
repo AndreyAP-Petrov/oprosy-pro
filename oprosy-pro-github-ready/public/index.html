@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Опросы PRO</title>
+  <link rel="stylesheet" href="/assets/style.css?v=2.7">
+</head>
+<body>
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo">Σ</div>
+      <h1>Опросы PRO</h1><p class="auth-note">Данные и таблицы доступны только зарегистрированным пользователям.</p>
+      <p>УЛЕЙ · общая статистика и защищённые аккаунты</p>
+
+      <div id="loginBox">
+        <input id="emailInput" type="email" placeholder="Email">
+        <input id="passwordInput" type="password" placeholder="Пароль">
+        <input id="totpInput" placeholder="2FA код, если уже подключен">
+        <button id="loginBtn">Войти</button>
+        <button id="showActivationBtn" class="auth-ghost">Первый вход / активация</button>
+      </div>
+
+      <div id="activationBox" class="hidden">
+        <div class="first-login-card">
+          <b>Активация аккаунта</b>
+          <p class="auth-note">Введите email и одноразовый код, который выдал администратор. Пароль задаёте только вы — администратор его не видит.</p>
+        </div>
+        <input id="activationEmailInput" type="email" placeholder="Email">
+        <input id="activationCodeInput" placeholder="Код активации">
+        <input id="activationNameInput" placeholder="Ваше имя">
+        <input id="activationPasswordInput" type="password" placeholder="Новый пароль, минимум 5 символов">
+        <input id="activationPasswordRepeatInput" type="password" placeholder="Повторите пароль">
+        <button id="activateAccountBtn">Активировать аккаунт</button>
+        <button id="cancelActivationBtn" class="auth-ghost">Назад ко входу</button>
+      </div>
+
+      <div id="firstLoginBox" class="hidden">
+        <div class="first-login-card">
+          <b>Первый вход</b>
+          <p class="auth-note">Введите имя и смените временный пароль. Потом появится личный QR для 2FA.</p>
+        </div>
+        <input id="firstNameInput" placeholder="Ваше имя">
+        <input id="firstNewPasswordInput" type="password" placeholder="Новый пароль, минимум 5 символов">
+        <input id="firstNewPasswordRepeatInput" type="password" placeholder="Повторите новый пароль">
+        <button id="completeFirstLoginBtn">Продолжить</button>
+      </div>
+
+      <div id="setup2faBox" class="hidden">
+        <h3>Подключите 2FA</h3>
+        <p>Сканируйте QR-код через Google Authenticator, Яндекс.Ключ, 2FAS или Authy.</p>
+        <div class="qr-wrap"><img id="qrImg" alt="QR для 2FA"></div>
+        <details>
+          <summary>Показать секрет вручную</summary>
+          <div class="secret-box" id="totpSecretBox"></div>
+        </details>
+        <input id="setupTotpCode" placeholder="Введите код из приложения">
+        <button id="enable2faBtn">Включить 2FA</button>
+        <button id="cancel2faBtn" class="auth-ghost">Назад ко входу</button>
+      </div>
+
+      <div id="authMsg" class="auth-msg"></div>
+    </div>
+  </div>
+
+  <div id="protectedShell" class="hidden">
+    <div class="auth-topbar">
+      <div class="auth-user-pill" id="authUserPill"></div>
+      <button id="openAuthAdminBtn" class="auth-btn hidden">Управление пользователями</button>
+      <button id="openProfileBtn" class="auth-btn auth-ghost">Профиль</button>
+      <button id="logoutBtn" class="auth-btn auth-ghost">Выйти</button>
+    </div>
+
+    <div id="authProfilePanel" class="hidden">
+      <h2>Профиль</h2>
+      <p class="auth-note">Можно изменить имя и пароль. Отключить 2FA нельзя.</p>
+      <label>Имя</label>
+      <input id="profileNameInput" placeholder="Ваше имя">
+      <label>Email</label>
+      <input id="profileEmailInput" disabled>
+      <label>Новый пароль</label>
+      <input id="profilePasswordInput" type="password" placeholder="Оставьте пустым, если не меняете">
+      <label>Повторите пароль</label>
+      <input id="profilePasswordRepeatInput" type="password" placeholder="Повторите новый пароль">
+      <button id="saveProfileBtn" class="auth-btn">Сохранить профиль</button>
+      <button id="closeProfileBtn" class="auth-btn auth-ghost">Закрыть</button>
+      <div id="profileMsg" class="auth-msg"></div>
+    </div>
+
+    <div id="authAdminPanel" class="hidden">
+      <h2>Пользователи</h2>
+      <p class="auth-note">Закрытый доступ для вашей команды. Каждый зарегистрированный пользователь получает постоянный уникальный ID и роль OWNER. Пароли пользователей никто не видит: человек сам задаёт пароль и подключает личную 2FA.</p>
+      <div class="auth-admin-grid compact-admin-grid">
+        <input id="newUserName" placeholder="Имя">
+        <input id="newUserEmail" placeholder="Email">
+        <div class="auth-note" style="display:flex;align-items:center;padding:0 12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;">Роль: <b style="margin-left:6px;">OWNER</b></div>
+      </div>
+      <button id="adminCreateUserBtn" class="auth-btn">Добавить пользователя</button>
+      <div id="adminNotice" class="admin-notice hidden"></div>
+      <div id="usersList"></div>
+    </div>
+
+    <div id="mainSoftware">
+      
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">Σ</div>
+        <div>
+          <b>Опросы PRO</b>
+          <span>ручной режим</span>
+        </div>
+      </div>
+
+      <div class="side-title">Пользователи</div>
+      <select id="userSelect" class="full-select"></select>
+      <button id="generalStatsBtn" class="full general-btn">ОБЩАЯ СТАТИСТИКА</button>
+      <button id="quotaBtn" class="full quota-main-btn quota-menu-btn">РАССЧИТАТЬ КВОТЫ</button>
+
+      <div class="side-title">Статистики</div>
+      <button id="addReportBtn" class="full">+ Новая статистика</button>
+      <div id="reportList" class="report-list"></div>
+
+      <div class="hint">
+        Пользователи видят публичные статистики друг друга. Приватную статистику видит только её владелец и главный owner.
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="small-label">Название статистики</div>
+          <input id="reportTitle" class="title-input">
+          <div class="subtitle">Аналитика по расходам, бюджету и статусу анкетирования</div>
+        </div>
+        <div class="date-card">
+          <span>Дата отчета</span>
+          <input id="reportDate">
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <button id="addRowBtn">+ Добавить строку</button>
+        <button id="addColumnBtn">+ Добавить колонку</button>
+        <button id="formulaManualBtn" class="formula-manual-btn">fx Формулы / мануал</button>
+        <button id="saveBtn">Сохранить</button>
+        <button id="exportBackupBtn">Скачать таблицу</button>
+        <button id="importBackupBtn">Загрузить таблицу</button>
+        <input id="importBackupInput" type="file" accept=".json" class="hidden-file">
+        <button id="exportCsvBtn">Скачать CSV</button>
+        <button id="printBtn">Печать / PDF</button>
+        <button id="deleteReportBtn" class="danger">Удалить статистику</button>
+      </section>
+
+      <section class="settings">
+        <div>
+          <label>НДС / коэффициент</label>
+          <input id="vatInput" type="number" step="0.01">
+        </div>
+        <div>
+          <label>Видимость статистики</label>
+          <select id="visibilitySelect">
+            <option value="public">Публичная — видят все</option>
+            <option value="private">Приватная — только я и owner</option>
+          </select>
+        </div>
+        <div>
+          <label>Масштаб таблицы</label>
+          <select id="zoomSelect">
+            <option value="1">100%</option>
+            <option value="0.9">90%</option>
+            <option value="0.8">80%</option>
+            <option value="0.7">70%</option>
+            <option value="0.6">60%</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="report">
+        <div class="report-head">
+          <div>
+            <div class="owner" id="ownerView"></div>
+            <h1 id="reportTitleView"></h1>
+            <p>Ручной ввод + автоматический расчет всех показателей</p>
+          </div>
+          <div class="report-date">
+            <span>Дата отчета</span>
+            <b id="dateView"></b>
+          </div>
+        </div>
+
+        <div class="scroll-help">↔ Таблицу можно прокручивать. Для маленьких экранов используй масштаб 70% / 60%.</div>
+
+        <div class="table-outer">
+          <div id="tableScaler" class="table-scaler">
+            <table id="mainStatsTable">
+              <colgroup id="mainColgroup"></colgroup>
+              <thead id="mainTableHead"></thead>
+              <tbody id="tableBody"></tbody>
+              <tfoot id="mainTableFoot"></tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div class="legend">
+          <span><b class="dot green-dot"></b> СОБРАЛИ</span>
+          <span><b class="dot blue-dot"></b> РАБОТАЕТ</span>
+          <span><b class="dot red-dot"></b> НЕ РАБОТАЕТ</span>
+        </div>
+      </section>
+
+      <section id="generalStatsSection" class="report hidden">
+        <div class="report-head">
+          <div>
+            <div class="owner">Сводка по доступным статистикам</div>
+            <h1>ОБЩАЯ СТАТИСТИКА</h1>
+            <p>Парные коллекторы М/Ж объединяются автоматически. Название каждого опроса показывается одной объединённой ячейкой.</p>
+          </div>
+          <button id="exportGeneralCsvBtn">Скачать общую CSV</button>
+        </div>
+        <div class="table-outer">
+          <table class="general-table">
+            <thead>
+              <tr>
+                <th>Название опроса</th>
+                <th>Коллектор</th>
+                <th>Показы</th>
+                <th>Клики</th>
+                <th>Стоимость клика</th>
+                <th>Анкеты</th>
+                <th>Стоимость анкеты</th>
+                <th>Потрачено с НДС</th>
+              </tr>
+            </thead>
+            <tbody id="generalStatsBody"></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2">Σ Итого</td>
+                <td id="generalTotalImpressions">0</td>
+                <td id="generalTotalClicks">0</td>
+                <td id="generalTotalCpc">0 ₽</td>
+                <td id="generalTotalCollected">0</td>
+                <td id="generalTotalCpa">0 ₽</td>
+                <td id="generalTotalSpent">0 ₽</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+
+  
+
+  <div id="columnBuilderModal" class="modal hidden">
+    <div class="modal-backdrop" id="columnBuilderBackdrop"></div>
+    <div class="formula-window">
+      <div class="quota-head">
+        <div>
+          <h2 id="columnBuilderTitle">Добавить колонку</h2>
+          <p>Ручной ввод или вычисляемая колонка с собственной формулой</p>
+        </div>
+        <button id="closeColumnBuilderBtn" class="ghost" type="button">×</button>
+      </div>
+
+      <div class="column-builder-grid">
+        <label>
+          Название колонки
+          <input id="columnName" placeholder="Например: CTR или Выручка">
+        </label>
+        <label>
+          Тип колонки
+          <select id="columnType">
+            <option value="manual">Ручной ввод</option>
+            <option value="formula">Формула — считается автоматически</option>
+          </select>
+        </label>
+        <label>
+          Формат
+          <select id="columnFormat">
+            <option value="text">Текст</option>
+            <option value="number">Число</option>
+            <option value="money">Деньги, ₽</option>
+            <option value="percent">Проценты, %</option>
+          </select>
+        </label>
+        <label>
+          Итог в строке «Σ Итого»
+          <select id="columnSummary">
+            <option value="auto">Автоматически</option>
+            <option value="sum">Сумма</option>
+            <option value="avg">Среднее</option>
+            <option value="min">Минимум</option>
+            <option value="max">Максимум</option>
+            <option value="count">Количество заполненных</option>
+            <option value="none">Не считать</option>
+          </select>
+        </label>
+        <label>
+          Знаков после запятой
+          <input id="columnDecimals" type="number" min="0" max="6" value="2">
+        </label>
+      </div>
+
+      <div id="formulaBuilderFields" class="formula-builder-fields hidden">
+        <label>
+          Готовая формула
+          <select id="columnPreset"></select>
+        </label>
+        <div id="columnPresetDescription" class="small-help"></div>
+        <label>
+          Формула
+          <textarea id="columnFormula" rows="3" placeholder="Например: SAFE_DIV([КЛИКИ],[ПОКАЗЫ])*100"></textarea>
+        </label>
+        <div class="formula-tip">
+          Колонки указываются в квадратных скобках: <code>[ПОКАЗЫ]</code>, <code>[КЛИКИ]</code>, <code>[АНКЕТЫ]</code>.
+          Можно ссылаться и на свои ручные колонки: например <code>[ВЫРУЧКА]</code>.
+        </div>
+      </div>
+
+      <div class="quota-actions">
+        <button id="saveColumnBuilderBtn" type="button">Сохранить колонку</button>
+        <button id="openFormulaManualFromBuilder" type="button" class="ghost">Открыть мануал формул</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formulaManualModal" class="modal hidden">
+    <div class="modal-backdrop" id="formulaManualBackdrop"></div>
+    <div class="formula-window formula-manual-window">
+      <div class="quota-head">
+        <div>
+          <h2>fx Формулы — справочник</h2>
+          <p>Готовые шаблоны + свой конструктор формул для дополнительных колонок</p>
+        </div>
+        <button id="closeFormulaManualBtn" class="ghost" type="button">×</button>
+      </div>
+
+      <div class="formula-manual-section">
+        <h3>Как добавить формулу</h3>
+        <ol>
+          <li>Нажмите <b>«+ Добавить колонку»</b>.</li>
+          <li>Выберите тип <b>«Формула — считается автоматически»</b>.</li>
+          <li>Выберите готовый шаблон или напишите формулу вручную.</li>
+          <li>Формула пересчитывается сразу при изменении исходных ячеек и сохраняется вместе с настройками таблицы.</li>
+        </ol>
+      </div>
+
+      <div class="formula-manual-section">
+        <h3>Доступные стандартные поля</h3>
+        <div class="formula-chip-grid">
+          <code>[ПОКАЗЫ]</code><code>[КЛИКИ]</code><code>[АНКЕТЫ]</code>
+          <code>[ПОТРАЧЕНО БЕЗ НДС]</code><code>[ПОТРАЧЕНО С НДС]</code>
+          <code>[СТОИМОСТЬ КЛИКА С НДС]</code><code>[СТОИМОСТЬ АНКЕТЫ С НДС]</code>
+          <code>[ОСТАЛОСЬ]</code><code>[НУЖНО]</code><code>[ПРОЦЕНТ]</code>
+          <code>[БЮДЖЕТ С НДС]</code><code>[КОЭФФИЦИЕНТ]</code>
+        </div>
+        <h4>Ваши ручные колонки в текущей статистике</h4>
+        <div id="formulaCustomRefs" class="formula-chip-grid"></div>
+      </div>
+
+      <div class="formula-manual-section">
+        <h3>Операторы</h3>
+        <div class="formula-doc-table">
+          <div><code>+ - * /</code><span>Сложение, вычитание, умножение, деление</span></div>
+          <div><code>%</code><span>Остаток от деления</span></div>
+          <div><code>^</code><span>Степень</span></div>
+          <div><code>&gt; &lt; &gt;= &lt;= == !=</code><span>Сравнения, возвращают 1 или 0</span></div>
+        </div>
+      </div>
+
+      <div class="formula-manual-section">
+        <h3>Функции</h3>
+        <div class="formula-doc-table">
+          <div><code>SAFE_DIV(a,b)</code><span>Безопасное деление: если b = 0, вернёт 0</span></div>
+          <div><code>PERCENT(a,b)</code><span>a / b × 100</span></div>
+          <div><code>IF(условие, да, нет)</code><span>Условная формула</span></div>
+          <div><code>ROUND(x,n)</code><span>Округлить x до n знаков</span></div>
+          <div><code>MIN(a,b,...)</code><span>Минимальное значение</span></div>
+          <div><code>MAX(a,b,...)</code><span>Максимальное значение</span></div>
+          <div><code>ABS(x)</code><span>Модуль числа</span></div>
+          <div><code>CEIL(x)</code><span>Округлить вверх</span></div>
+          <div><code>FLOOR(x)</code><span>Округлить вниз</span></div>
+          <div><code>SQRT(x)</code><span>Квадратный корень</span></div>
+          <div><code>POWER(a,b)</code><span>a в степени b</span></div>
+          <div><code>CLAMP(x,min,max)</code><span>Ограничить число диапазоном</span></div>
+        </div>
+      </div>
+
+      <div class="formula-manual-section">
+        <h3>Готовые формулы</h3>
+        <div id="formulaPresetCatalog" class="formula-catalog"></div>
+      </div>
+
+      <div class="formula-manual-section formula-examples">
+        <h3>Примеры своих формул</h3>
+        <p><code>SAFE_DIV([КЛИКИ],[ПОКАЗЫ])*100</code> — CTR.</p>
+        <p><code>IF([АНКЕТЫ]&gt;=100,1,0)</code> — отметка 1, когда собрано 100+ анкет.</p>
+        <p><code>SAFE_DIV([ВЫРУЧКА]-[ПОТРАЧЕНО С НДС],[ПОТРАЧЕНО С НДС])*100</code> — ROI после добавления ручной колонки «Выручка».</p>
+        <p><code>SAFE_DIV([ПРОДАЖИ],[АНКЕТЫ])*100</code> — конверсия в продажу после добавления ручной колонки «Продажи».</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="quotaModal" class="modal hidden">
+    <div class="modal-backdrop" id="quotaBackdrop"></div>
+    <div class="quota-window wide">
+      <div class="quota-head">
+        <div>
+          <h2>Рассчитать квоты</h2>
+          <p>Файл / ручной справочник / несколько регионов / длина опроса</p>
+        </div>
+        <button id="closeQuotaBtn" class="ghost">×</button>
+      </div>
+
+      <div class="quota-tabs">
+        <button type="button" class="quota-tab active" data-tab="calc">Расчет</button>
+        <button type="button" class="quota-tab" data-tab="data">Данные</button>
+        <button type="button" class="quota-tab" data-tab="manual">Ручной ввод</button>
+      </div>
+
+      <div id="quotaTabCalc" class="quota-tab-panel">
+        <div class="quota-form advanced">
+          <label class="city-search-field">
+            Города / регионы
+            <input id="quotaCitySearchInput" placeholder="Начните вводить город или регион">
+            <div id="quotaCitySuggestions" class="city-suggestions"></div>
+            <div id="selectedQuotaCities" class="selected-cities"></div>
+          </label>
+          <label>
+            Основные анкеты
+            <input id="quotaMainInput" type="number" min="0" value="0">
+          </label>
+          <label>
+            Возраст 18–24
+            <input id="quotaAge18Input" type="number" min="0" value="0">
+          </label>
+          <label>
+            Возраст 25–34
+            <input id="quotaAge25Input" type="number" min="0" value="0">
+          </label>
+          <label>
+            Длина опроса
+            <select id="surveyLengthSelect">
+              <option value="standard">До 50 вопросов / стандарт</option>
+              <option value="long50">От 50 вопросов / +20%</option>
+              <option value="long70">От 70 вопросов / +30%</option>
+              <option value="custom">Своя надбавка</option>
+            </select>
+          </label>
+          <label>
+            Своя надбавка, %
+            <input id="customMarkupInput" type="number" min="0" value="20">
+          </label>
+        </div>
+
+        <div class="quota-actions">
+          <button id="calculateQuotaBtn">Рассчитать</button>
+          <button id="addQuotaToTableBtn" class="ghost">Добавить в основную таблицу</button>
+        </div>
+
+        <div id="quotaResult" class="quota-result"></div>
+      </div>
+
+      <div id="quotaTabData" class="quota-tab-panel hidden">
+        <div class="data-grid">
+          <div class="admin-like-card">
+            <h3>Загрузить данные файлом</h3>
+            <p>Поддержка CSV/JSON. Для XLSX работает через браузерную библиотеку SheetJS, если интернет доступен.</p>
+            <input id="quotaFileInput" type="file" accept=".csv,.json,.xlsx,.xls">
+            <button id="loadQuotaFileBtn" type="button">Загрузить файл</button>
+            <div class="small-help">
+              Колонки в файле: регион/город, цена общая, цена 18-24, цена 25-34, конверсия общая, конверсия 18-24, конверсия 25-34.
+            </div>
+          </div>
+
+          <div class="admin-like-card danger-zone">
+            <h3>Снести все данные</h3>
+            <p>Удаляет загруженный справочник, ручные города и конверсии. Правило длины опроса остается под капотом.</p>
+            <button id="resetQuotaDataBtn" type="button" class="danger">СНЕСТИ ВСЕ ДАННЫЕ</button>
+          </div>
+        </div>
+
+        <div id="quotaDataStatus" class="quota-data-status"></div>
+        <div id="quotaDataPreview" class="quota-result"></div>
+      </div>
+
+      <div id="quotaTabManual" class="quota-tab-panel hidden">
+        <div class="custom-city-box">
+          <div class="custom-city-title">Добавить город / регион вручную</div>
+          <div class="manual-grid">
+            <label>Город / регион<input id="manualCityInput" placeholder="Например: Смоленск"></label>
+            <label>Взять правила из<select id="manualBaseSelect"></select></label>
+            <label>Цена общая<input id="manualPriceMainInput" type="number" step="0.01" placeholder="можно пусто"></label>
+            <label>Цена 18–24<input id="manualPrice18Input" type="number" step="0.01" placeholder="можно пусто"></label>
+            <label>Цена 25–34<input id="manualPrice25Input" type="number" step="0.01" placeholder="можно пусто"></label>
+            <label>Конверсия общая, %<input id="manualConvMainInput" type="number" step="0.01" placeholder="можно пусто"></label>
+            <label>Конверсия 18–24, %<input id="manualConv18Input" type="number" step="0.01" placeholder="можно пусто"></label>
+            <label>Конверсия 25–34, %<input id="manualConv25Input" type="number" step="0.01" placeholder="можно пусто"></label>
+          </div>
+          <div class="quota-actions">
+            <button id="saveManualCityBtn" type="button">Сохранить город</button>
+          </div>
+          <div id="manualCityStatus" class="custom-city-status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  
+
+    </div>
+  </div>
+
+  <script src="/assets/main-app.js?v=2.7"></script>
+  <script src="/assets/auth-shell.js?v=2.7"></script>
+</body>
+</html>
