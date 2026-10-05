@@ -115,6 +115,7 @@
       <div class="side-title">Пользователи</div>
       <select id="userSelect" class="full-select"></select>
       <button id="generalStatsBtn" class="full general-btn">ОБЩАЯ СТАТИСТИКА</button>
+      <button id="surveyManagementBtn" class="full management-btn">УПРАВЛЕНИЕ ОПРОСАМИ</button>
       <button id="quotaBtn" class="full quota-main-btn quota-menu-btn">РАССЧИТАТЬ КВОТЫ</button>
 
       <div class="side-title">Статистики</div>
@@ -149,6 +150,7 @@
         <input id="importBackupInput" type="file" accept=".json" class="hidden-file">
         <button id="exportCsvBtn">Скачать CSV</button>
         <button id="printBtn">Печать / PDF</button>
+        <button id="toggleCompleteBtn" class="complete-report-btn">✓ Завершить опрос</button>
         <button id="deleteReportBtn" class="danger">Удалить статистику</button>
       </section>
 
@@ -167,6 +169,7 @@
         <div>
           <label>Масштаб таблицы</label>
           <select id="zoomSelect">
+            <option value="1.1">110%</option>
             <option value="1">100%</option>
             <option value="0.9">90%</option>
             <option value="0.8">80%</option>
@@ -179,7 +182,7 @@
       <section class="report">
         <div class="report-head">
           <div>
-            <div class="owner" id="ownerView"></div>
+            <div class="report-badges"><div class="owner" id="ownerView"></div><div id="lifecycleBadge" class="lifecycle-badge active">● Активный</div></div>
             <h1 id="reportTitleView"></h1>
             <p>Ручной ввод + автоматический расчет всех показателей</p>
           </div>
@@ -207,6 +210,34 @@
           <span><b class="dot blue-dot"></b> РАБОТАЕТ</span>
           <span><b class="dot red-dot"></b> НЕ РАБОТАЕТ</span>
         </div>
+
+        <div id="autoAnalysis" class="auto-analysis"></div>
+      </section>
+
+      <section id="surveyManagementSection" class="report management-section hidden">
+        <div class="report-head management-head">
+          <div>
+            <div class="owner">Контроль темпа, стоимости и выполнения</div>
+            <h1>УПРАВЛЕНИЕ ОПРОСАМИ</h1>
+            <p>Активные опросы собраны в одном месте. Завершённые уходят в архив и больше не получают автоснепшоты.</p>
+          </div>
+          <div class="management-controls">
+            <div class="management-tabs">
+              <button id="managementActiveTab" class="management-tab active" type="button">Активные <span id="managementActiveCount">0</span></button>
+              <button id="managementCompletedTab" class="management-tab" type="button">Завершённые <span id="managementCompletedCount">0</span></button>
+            </div>
+            <label class="management-sort-label">Сортировка
+              <select id="managementSort">
+                <option value="remaining">Осталось собрать</option>
+                <option value="spent">Потрачено</option>
+                <option value="cpa">Цена анкеты</option>
+                <option value="progress">Выполнение</option>
+                <option value="pace">Анкет в час</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div id="surveyManagementGrid" class="survey-management-grid"></div>
       </section>
 
       <section id="generalStatsSection" class="report hidden">
@@ -514,7 +545,7 @@
     </div>
   </div>
 
-  <script src="/assets/main-app.js?v=2.7"></script>
-  <script src="/assets/auth-shell.js?v=2.7"></script>
+  <script src="/assets/main-app.js?v=2.8"></script>
+  <script src="/assets/auth-shell.js?v=2.8"></script>
 </body>
 </html>

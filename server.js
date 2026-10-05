@@ -4554,7 +4554,8 @@ var DATA_DIR = process.env.OPROSY_DATA_DIR || (path.basename(__dirname) === "cur
 var DB_PATH = path.join(DATA_DIR, "db.json");
 var MASTER_KEY_PATH = path.join(DATA_DIR, ".master-key");
 var OWNER_CODE_PATH = path.join(__dirname, "OWNER_FIRST_LOGIN.txt");
-var OWNER_EMAIL = "andrey.27101993@gmail.com";
+var OWNER_EMAIL = String(process.env.OPROSY_OWNER_EMAIL || "andrey.27101993@gmail.com").trim().toLowerCase();
+var OWNER_NAME = String(process.env.OPROSY_OWNER_NAME || "Андрей").trim() || "Владелец";
 var SESSION_TTL_MS = 1e3 * 60 * 60 * 12;
 var TEMP_TTL_MS = 1e3 * 60 * 15;
 var ACTIVATION_TTL_MS = 1e3 * 60 * 60 * 24 * 7;
@@ -4567,6 +4568,7 @@ var MASTER_KEY = getOrCreateMasterKey();
 var db = loadDb();
 normalizeDb(db);
 ensureOwner(db);
+seedInitialReportSnapshots();
 saveDb();
 var loginAttempts = /* @__PURE__ */ new Map();
 var server = http.createServer(async (req, res) => {
@@ -4586,7 +4588,7 @@ var server = http.createServer(async (req, res) => {
       }
     }
     if (req.method === "GET" && url.pathname === "/api/health") {
-      return sendJson(res, 200, { ok: true, service: "oprosy-pro", port: PORT });
+      return sendJson(res, 200, { ok: true, service: "oprosy-pro", version: "2.8.0", port: PORT });
     }
     return serveStatic(req, res, url.pathname);
   } catch (e) {
@@ -4600,6 +4602,18 @@ server.listen(PORT, "0.0.0.0", () => {
     console.log(`[SECURITY] \u0413\u043B\u0430\u0432\u043D\u044B\u0439 \u0430\u0434\u043C\u0438\u043D \u043E\u0436\u0438\u0434\u0430\u0435\u0442 \u043F\u0435\u0440\u0432\u0438\u0447\u043D\u0443\u044E \u0430\u043A\u0442\u0438\u0432\u0430\u0446\u0438\u044E. \u041A\u043E\u0434 \u043D\u0430\u0445\u043E\u0434\u0438\u0442\u0441\u044F \u0432 ${OWNER_CODE_PATH}`);
   }
 });
+var snapshotTimer = setInterval(() => {
+  try {
+    let changed = false;
+    for (const report of Object.values(db.statistics || {})) {
+      if (maybeAppendReportSnapshot(report, "auto", false)) changed = true;
+    }
+    if (changed) saveDb();
+  } catch (e) {
+    console.error("[snapshots]", e && e.message ? e.message : e);
+  }
+}, 15 * 60 * 1e3);
+if (snapshotTimer && typeof snapshotTimer.unref === "function") snapshotTimer.unref();
 function migrateLegacyDataDir() {
   if (fs.existsSync(DB_PATH)) return;
   const candidates = [];
@@ -4856,10 +4870,11 @@ function handleApp(body, req) {
       title: String(body.title || `\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430 \u2014 ${actor.name || actor.email}`).trim(),
       date: (/* @__PURE__ */ new Date()).toLocaleDateString("ru-RU"),
       vat: 1.22,
-      zoom: 0.8,
+      zoom: 1,
       visibility: body.visibility === "private" ? "private" : "public",
       rows: defaultReportRows()
     }, actor.email);
+    maybeAppendReportSnapshot(report, "created", true);
     db.statistics[id] = report;
     saveDb();
     return ok({ report: clientReport(report, actor) });
@@ -4869,9 +4884,47 @@ function handleApp(body, req) {
     const existing = db.statistics[String(incoming.id || "")];
     if (!existing) return bad("\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430", 404);
     if (existing.ownerEmail !== actor.email) return bad("\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0443 \u043C\u043E\u0436\u0435\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0451 \u0432\u043B\u0430\u0434\u0435\u043B\u0435\u0446", 403);
-    const normalized = normalizeReport({ ...existing, ...incoming, ownerEmail: existing.ownerEmail }, existing.ownerEmail);
+    if (existing.lifecycleStatus === "completed") return bad("Опрос завершён. Сначала верните его в активные", 409);
+    const normalized = normalizeReport({
+      ...existing,
+      ...incoming,
+      ownerEmail: existing.ownerEmail,
+      lifecycleStatus: existing.lifecycleStatus,
+      completedAt: existing.completedAt,
+      snapshots: existing.snapshots
+    }, existing.ownerEmail);
     normalized.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    maybeAppendReportSnapshot(normalized, "autosave", false);
     db.statistics[normalized.id] = normalized;
+    saveDb();
+    return ok({ report: clientReport(normalized, actor) });
+  }
+  if (action === "setReportLifecycle") {
+    const id = String(body.reportId || "");
+    const existing = db.statistics[id];
+    if (!existing) return bad("Статистика не найдена", 404);
+    if (existing.ownerEmail !== actor.email) return bad("Менять статус опроса может только его владелец", 403);
+    const nextStatus = body.lifecycleStatus === "completed" ? "completed" : "active";
+    const finalIncoming = nextStatus === "completed" && body.report && typeof body.report === "object" ? body.report : null;
+    const normalized = normalizeReport(finalIncoming ? {
+      ...existing,
+      ...finalIncoming,
+      ownerEmail: existing.ownerEmail,
+      lifecycleStatus: existing.lifecycleStatus,
+      completedAt: existing.completedAt,
+      snapshots: existing.snapshots
+    } : existing, existing.ownerEmail);
+    if (nextStatus === "completed") {
+      maybeAppendReportSnapshot(normalized, "completed", true);
+      normalized.lifecycleStatus = "completed";
+      normalized.completedAt = (/* @__PURE__ */ new Date()).toISOString();
+    } else {
+      normalized.lifecycleStatus = "active";
+      normalized.completedAt = "";
+      maybeAppendReportSnapshot(normalized, "reopened", true);
+    }
+    normalized.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    db.statistics[id] = normalized;
     saveDb();
     return ok({ report: clientReport(normalized, actor) });
   }
@@ -4888,6 +4941,7 @@ function handleApp(body, req) {
     const reports = Array.isArray(body.reports) ? body.reports.slice(0, 100) : [];
     for (const report of reports) {
       const normalized = normalizeReport({ ...report, id: uid(), ownerEmail: actor.email }, actor.email);
+      maybeAppendReportSnapshot(normalized, "imported", true);
       db.statistics[normalized.id] = normalized;
     }
     saveDb();
@@ -4906,6 +4960,7 @@ function handleApp(body, req) {
       for (const report of Array.isArray(oldUser?.reports) ? oldUser.reports.slice(0, 100) : []) {
         const title = target.email === actor.email && oldName && oldName.toLowerCase() !== String(actor.name || "").toLowerCase() ? `[${oldName}] ${report.title || "\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430"}` : report.title || "\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430";
         const normalized = normalizeReport({ ...report, id: uid(), title, ownerEmail: target.email }, target.email);
+        maybeAppendReportSnapshot(normalized, "imported", true);
         db.statistics[normalized.id] = normalized;
         imported++;
         count++;
@@ -4930,9 +4985,10 @@ function canViewReport(actor, report) {
   return report.ownerEmail === actor.email || report.visibility === "public" || actor.role === "owner";
 }
 function clientReport(report, actor) {
-  const { ownerEmail, ...safe } = report;
+  const { ownerEmail, snapshots, ...safe } = report;
   return {
     ...safe,
+    snapshots: (Array.isArray(snapshots) ? snapshots : []).slice(-72),
     ownerId: userPublicId(ownerEmail),
     editable: ownerEmail === actor.email,
     canViewPrivate: canViewReport(actor, report)
@@ -4958,16 +5014,68 @@ function defaultReportRows() {
     social, impressions: 0, clicks: 0, collected: 0, spentNet: 0, need: 0, status: "РАБОТАЕТ"
   }));
 }
+const REPORT_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1e3;
+const REPORT_SNAPSHOT_LIMIT = 750;
+function reportTotals(report) {
+  const vat = safeNumber(report && report.vat) || 1.22;
+  let impressions = 0, clicks = 0, collected = 0, spentVat = 0, need = 0;
+  for (const row of Array.isArray(report && report.rows) ? report.rows : []) {
+    impressions += safeNumber(row.impressions);
+    clicks += safeNumber(row.clicks);
+    collected += safeNumber(row.collected);
+    need += safeNumber(row.need);
+    let spentNet = 0;
+    if (row.spentNet !== void 0 && row.spentNet !== null) spentNet = safeNumber(row.spentNet);
+    else if (row.spentVat !== void 0 && row.spentVat !== null) spentNet = vat > 0 ? safeNumber(row.spentVat) / vat : safeNumber(row.spentVat);
+    else spentNet = safeNumber(row.spent);
+    spentVat += spentNet * vat;
+  }
+  return { impressions, clicks, collected, spentVat, need };
+}
+function normalizeSnapshot(snapshot) {
+  return {
+    id: String(snapshot && snapshot.id || uid()).slice(0, 80),
+    at: String(snapshot && snapshot.at || (/* @__PURE__ */ new Date()).toISOString()).slice(0, 40),
+    impressions: Math.max(0, safeNumber(snapshot && snapshot.impressions)),
+    clicks: Math.max(0, safeNumber(snapshot && snapshot.clicks)),
+    collected: Math.max(0, safeNumber(snapshot && snapshot.collected)),
+    spentVat: Math.max(0, safeNumber(snapshot && snapshot.spentVat)),
+    need: Math.max(0, safeNumber(snapshot && snapshot.need)),
+    reason: ["auto", "autosave", "startup", "created", "imported", "completed", "reopened"].includes(snapshot && snapshot.reason) ? snapshot.reason : "auto"
+  };
+}
+function maybeAppendReportSnapshot(report, reason = "auto", force = false) {
+  if (!report || report.lifecycleStatus === "completed") return false;
+  report.snapshots = Array.isArray(report.snapshots) ? report.snapshots.map(normalizeSnapshot).slice(-REPORT_SNAPSHOT_LIMIT) : [];
+  const now = Date.now();
+  const last = report.snapshots[report.snapshots.length - 1];
+  const lastAt = last ? Date.parse(last.at) : 0;
+  if (!force && lastAt && Number.isFinite(lastAt) && now - lastAt < REPORT_SNAPSHOT_INTERVAL_MS) return false;
+  const totals = reportTotals(report);
+  report.snapshots.push(normalizeSnapshot({ id: uid(), at: (/* @__PURE__ */ new Date(now)).toISOString(), ...totals, reason }));
+  if (report.snapshots.length > REPORT_SNAPSHOT_LIMIT) report.snapshots = report.snapshots.slice(-REPORT_SNAPSHOT_LIMIT);
+  return true;
+}
+function seedInitialReportSnapshots() {
+  for (const report of Object.values(db && db.statistics || {})) maybeAppendReportSnapshot(report, "startup", false);
+}
 function normalizeReport(report, ownerEmail) {
   const vat = clampNumber(report.vat, 1, 5, 1.22);
+  const previousScaleVersion = safeNumber(report.uiScaleVersion);
+  const requestedZoom = clampNumber(report.zoom, 0.5, 1.2, 1);
+  const normalizedZoom = previousScaleVersion < 28 && Math.abs(requestedZoom - 0.8) < 0.001 ? 1 : requestedZoom;
   return {
     id: String(report.id || uid()),
     ownerEmail: normEmail(ownerEmail || report.ownerEmail),
     title: String(report.title || "\u041D\u043E\u0432\u0430\u044F \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430").slice(0, 200),
     date: String(report.date || (/* @__PURE__ */ new Date()).toLocaleDateString("ru-RU")).slice(0, 40),
     vat,
-    zoom: clampNumber(report.zoom, 0.5, 1.2, 0.8),
+    zoom: normalizedZoom,
+    uiScaleVersion: 28,
     visibility: report.visibility === "private" ? "private" : "public",
+    lifecycleStatus: report.lifecycleStatus === "completed" ? "completed" : "active",
+    completedAt: report.lifecycleStatus === "completed" ? String(report.completedAt || "").slice(0, 40) : "",
+    snapshots: (Array.isArray(report.snapshots) ? report.snapshots : []).slice(-REPORT_SNAPSHOT_LIMIT).map(normalizeSnapshot),
     customColumns: (Array.isArray(report.customColumns) ? report.customColumns : []).slice(0, 50).map((c) => ({
       id: String(c.id || uid()).slice(0, 80),
       title: String(c.title || "Колонка").slice(0, 120),
@@ -5076,7 +5184,7 @@ function ensureOwner(target) {
     activationCode = generateActivationCode();
     fs.writeFileSync(OWNER_CODE_PATH, activationCode + "\n", { encoding: "utf8", mode: 384 });
   }
-  target.users[OWNER_EMAIL] = makePendingUser(OWNER_EMAIL, "owner", "\u0410\u043D\u0434\u0440\u0435\u0439", activationCode);
+  target.users[OWNER_EMAIL] = makePendingUser(OWNER_EMAIL, "owner", OWNER_NAME, activationCode);
 }
 function makePendingUser(email, role, name, activationCode) {
   return {

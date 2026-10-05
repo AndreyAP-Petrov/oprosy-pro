@@ -3,6 +3,9 @@ const LEGACY_MIGRATION_FLAG = 'oprosyPro_serverMigration_v2_done';
 let state = {users:[]};
 let activeUserId = '';
 let generalMode = false;
+let managementMode = false;
+let managementTab = 'active';
+let managementSort = 'remaining';
 let appReady = false;
 let saveTimer = null;
 const reportSaveQueues = new Map();
@@ -68,8 +71,14 @@ async function maybeMigrateLegacyState(workspace){
 
 function normalizeClientReport(r){
   r.vat = parseNumber(r.vat || 1.22) || 1.22;
-  r.zoom = parseNumber(r.zoom || 0.8) || 0.8;
+  r.zoom = parseNumber(r.zoom || 1) || 1;
   r.visibility = r.visibility === 'private' ? 'private' : 'public';
+  r.lifecycleStatus = r.lifecycleStatus === 'completed' ? 'completed' : 'active';
+  r.completedAt = r.lifecycleStatus === 'completed' ? String(r.completedAt || '') : '';
+  r.snapshots = Array.isArray(r.snapshots) ? r.snapshots.map(s=>({
+    id:String(s.id||''), at:String(s.at||''), impressions:parseNumber(s.impressions), clicks:parseNumber(s.clicks),
+    collected:parseNumber(s.collected), spentVat:parseNumber(s.spentVat), need:parseNumber(s.need), reason:String(s.reason||'auto')
+  })).filter(s=>Date.parse(s.at)).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)) : [];
   r.customColumns = Array.isArray(r.customColumns) ? r.customColumns.map(c=>({
     id:String(c.id||uid()),
     title:String(c.title||'Колонка'),
@@ -110,7 +119,8 @@ function activeReport(){
   if(!u) return null;
   return u.reports.find(r=>r.id===u.activeReportId) || u.reports[0] || null;
 }
-function isEditable(){ return !!activeReport()?.editable; }
+function canEditActiveReport(r){ return !!r?.editable && r.lifecycleStatus !== 'completed'; }
+function isEditable(){ return canEditActiveReport(activeReport()); }
 
 function parseNumber(v){
   if(typeof v === 'number') return Number.isFinite(v) ? v : 0;
@@ -158,10 +168,11 @@ function renderReports(){
   }
   u.reports.forEach(r=>{
     const el=document.createElement('div');
-    el.className='report-item'+(r.id===u.activeReportId&&!generalMode?' active':'');
+    el.className='report-item'+(r.id===u.activeReportId&&!generalMode&&!managementMode?' active':'')+(r.lifecycleStatus==='completed'?' completed':'');
     const privacy=r.visibility==='private'?'🔒':'🌐';
-    el.innerHTML=`<b>${privacy} ${escapeHtml(r.title)}</b><span>${escapeHtml(r.date)} · строк: ${r.rows.length}</span>`;
-    el.onclick=()=>{ generalMode=false; u.activeReportId=r.id; render(); };
+    const lifecycle=r.lifecycleStatus==='completed'?'✓ завершён':'● активный';
+    el.innerHTML=`<b>${privacy} ${escapeHtml(r.title)}</b><span>${escapeHtml(r.date)} · ${lifecycle} · строк: ${r.rows.length}</span>`;
+    el.onclick=()=>{ generalMode=false; managementMode=false; u.activeReportId=r.id; render(); };
     list.appendChild(el);
   });
 }
@@ -173,28 +184,31 @@ function applyScale(r){
   scaler.style.width=`${100/zoom}%`;
 }
 
-function setEditorVisible(visible){
-  document.querySelector('.topbar').classList.toggle('hidden',!visible);
-  document.querySelector('.toolbar').classList.toggle('hidden',!visible);
-  document.querySelector('.settings').classList.toggle('hidden',!visible);
-  document.querySelector('section.report:not(#generalStatsSection)').classList.toggle('hidden',!visible);
-  document.getElementById('generalStatsSection').classList.toggle('hidden',visible);
+function setAppMode(mode){
+  const editorVisible=mode==='editor';
+  document.querySelector('.topbar').classList.toggle('hidden',!editorVisible);
+  document.querySelector('.toolbar').classList.toggle('hidden',!editorVisible);
+  document.querySelector('.settings').classList.toggle('hidden',!editorVisible);
+  const editorReport=document.querySelector('main > section.report:not(#generalStatsSection):not(#surveyManagementSection)');
+  if(editorReport) editorReport.classList.toggle('hidden',!editorVisible);
+  document.getElementById('generalStatsSection')?.classList.toggle('hidden',mode!=='general');
+  document.getElementById('surveyManagementSection')?.classList.toggle('hidden',mode!=='management');
 }
 
 const BASE_COLUMNS = [
-  {key:'social',title:'Коллектор / соцсеть',width:225,sticky:true},
-  {key:'impressions',title:'Показы',width:115},
-  {key:'clicks',title:'Клики',width:110},
-  {key:'collected',title:'Собрано анкет',width:125},
-  {key:'spentNet',title:'Потрачено без НДС',width:145},
-  {key:'spentVat',title:'Потрачено с НДС',width:145},
-  {key:'clickPrice',title:'Стоимость клика с НДС',width:145},
-  {key:'leadPrice',title:'Стоимость анкеты с НДС',width:155},
-  {key:'left',title:'Осталось сделать',width:120},
-  {key:'need',title:'Всего необходимо анкет',width:150},
-  {key:'status',title:'СТАТУС',width:135},
-  {key:'percent',title:'Сколько процентов собрано',width:175},
-  {key:'budget',title:'Всего нужно бюджета в среднем c НДС',width:190},
+  {key:'social',title:'Коллектор / соцсеть',width:255,sticky:true},
+  {key:'impressions',title:'Показы',width:130},
+  {key:'clicks',title:'Клики',width:125},
+  {key:'collected',title:'Собрано анкет',width:145},
+  {key:'spentNet',title:'Потрачено без НДС',width:165},
+  {key:'spentVat',title:'Потрачено с НДС',width:165},
+  {key:'clickPrice',title:'Стоимость клика с НДС',width:165},
+  {key:'leadPrice',title:'Стоимость анкеты с НДС',width:175},
+  {key:'left',title:'Осталось сделать',width:140},
+  {key:'need',title:'Всего необходимо анкет',width:170},
+  {key:'status',title:'СТАТУС',width:150},
+  {key:'percent',title:'Сколько процентов собрано',width:190},
+  {key:'budget',title:'Всего нужно бюджета в среднем c НДС',width:210},
   {key:'delete',title:'✕',width:55,noPrint:true}
 ];
 
@@ -253,7 +267,7 @@ function initColumnResizers(r){
 }
 
 function syncVisibleInputsToState(){
-  const r=activeReport(); if(!r?.editable) return;
+  const r=activeReport(); if(!canEditActiveReport(r)) return;
   document.querySelectorAll('#tableBody [data-row][data-field]').forEach(el=>{
     const i=Number(el.dataset.row), field=el.dataset.field; const row=r.rows[i]; if(!row)return;
     if(field.startsWith('custom:')){ row.customFields=row.customFields||{}; row.customFields[field.slice(7)]=el.value; }
@@ -538,10 +552,11 @@ function recalculateTotalsDom(){
     if(sumEl)sumEl.textContent=summarizeCustomColumn(col,r,col.summary);
     if(avgEl)avgEl.textContent=summarizeCustomColumn(col,r,'avg');
   });
+  renderAutoAnalysis(r);
 }
 
 function updateRowValueOnly(i,field,value){
-  const r=activeReport(); if(!r?.editable)return; const row=r.rows[i]; if(!row)return;
+  const r=activeReport(); if(!canEditActiveReport(r))return; const row=r.rows[i]; if(!row)return;
   if(field.startsWith('custom:')){row.customFields=row.customFields||{};row.customFields[field.slice(7)]=value;}
   else row[field]=['impressions','clicks','collected','spentNet','need'].includes(field)?parseNumber(value):value;
 
@@ -582,7 +597,7 @@ function renderFormulaPresetOptions(){
 }
 
 function openColumnBuilder(id=null){
-  const r=activeReport(); if(!r?.editable)return;
+  const r=activeReport(); if(!canEditActiveReport(r))return;
   editingCustomColumnId=id;
   const col=id?(r.customColumns||[]).find(c=>c.id===id):null;
   document.getElementById('columnBuilderTitle').textContent=col?'Настроить колонку':'Добавить колонку';
@@ -623,7 +638,7 @@ function applyFormulaPreset(){
 }
 
 function saveCustomColumnFromBuilder(){
-  const r=activeReport(); if(!r?.editable)return;
+  const r=activeReport(); if(!canEditActiveReport(r))return;
   const title=String(document.getElementById('columnName')?.value||'').trim();
   if(!title){alert('Введите название колонки');return;}
   const type=document.getElementById('columnType')?.value==='formula'?'formula':'manual';
@@ -648,7 +663,7 @@ function saveCustomColumnFromBuilder(){
 function editCustomColumn(id){openColumnBuilder(id);}
 
 function removeCustomColumn(id){
-  const r=activeReport(); if(!r?.editable)return; if(!confirm('Удалить эту дополнительную колонку?'))return;
+  const r=activeReport(); if(!canEditActiveReport(r))return; if(!confirm('Удалить эту дополнительную колонку?'))return;
   r.customColumns=(r.customColumns||[]).filter(c=>c.id!==id); r.rows.forEach(row=>{if(row.customFields)delete row.customFields[id];});
   saveState(); render();
 }
@@ -668,24 +683,157 @@ function openFormulaManual(){
 
 function closeFormulaManual(){document.getElementById('formulaManualModal')?.classList.add('hidden');}
 
+function calculateReportMetrics(r){
+  const vat=parseNumber(r?.vat)||1.22;
+  let impressions=0,clicks=0,collected=0,spentVat=0,need=0,left=0;
+  (r?.rows||[]).forEach(row=>{
+    const c=calculateRow(row,vat); impressions+=c.impressions; clicks+=c.clicks; collected+=c.collected; spentVat+=c.spentVat; need+=c.need; left+=c.left;
+  });
+  const progress=need>0?collected/need*100:0;
+  const conversion=clicks>0?collected/clicks*100:0;
+  const cpa=collected>0?spentVat/collected:0;
+  return {impressions,clicks,collected,spentVat,need,left,progress,conversion,cpa,pace:calculateSurveyPace(r,collected)};
+}
+
+function calculateSurveyPace(r,currentCollected){
+  const now=Date.now(), cutoff=now-24*60*60*1000;
+  const points=(Array.isArray(r?.snapshots)?r.snapshots:[]).map(s=>({at:Date.parse(s.at),collected:parseNumber(s.collected)})).filter(p=>Number.isFinite(p.at)&&p.at<=now).sort((a,b)=>a.at-b.at);
+  points.push({at:now,collected:parseNumber(currentCollected)});
+  const recent=points.filter(p=>p.at>=cutoff);
+  if(recent.length<2)return {available:false,value:0,hours:0,delta:0};
+  const first=recent[0],last=recent[recent.length-1];
+  const hours=(last.at-first.at)/3600000;
+  if(hours<0.75)return {available:false,value:0,hours,delta:0};
+  const delta=Math.max(0,last.collected-first.collected);
+  return {available:true,value:delta/hours,hours,delta};
+}
+
+function allWorkspaceReports(){
+  const out=[];
+  state.users.forEach(u=>(u.reports||[]).forEach(r=>out.push({user:u,report:r,metrics:calculateReportMetrics(r)})));
+  return out;
+}
+
+function openManagedReport(userId,reportId){
+  const u=state.users.find(x=>x.id===userId); if(!u)return;
+  activeUserId=u.id; u.activeReportId=reportId; managementMode=false; generalMode=false; render();
+}
+
+async function setReportLifecycle(reportId,lifecycleStatus){
+  const r=findReportById(reportId); if(!r?.editable)return;
+  const completing=lifecycleStatus==='completed';
+  const question=completing?'Завершить опрос? Автоснепшоты остановятся, а опрос уйдёт из активных.':'Вернуть опрос в активные? Автоснепшоты снова включатся.';
+  if(!confirm(question))return;
+  try{
+    if(activeReport()?.id===reportId) syncVisibleInputsToState();
+    await appApi('setReportLifecycle',{reportId,lifecycleStatus,report:completing?cloneReport(r):undefined});
+    await initApp();
+    managementMode=true; generalMode=false; managementTab=completing?'active':'completed'; render();
+  }catch(e){alert('Не удалось изменить статус опроса: '+e.message);}
+}
+
+function toggleActiveReportLifecycle(){
+  const r=activeReport(); if(!r?.editable)return;
+  return setReportLifecycle(r.id,r.lifecycleStatus==='completed'?'active':'completed');
+}
+
+function renderSurveyManagement(){
+  const grid=document.getElementById('surveyManagementGrid'); if(!grid)return;
+  const all=allWorkspaceReports();
+  const active=all.filter(x=>x.report.lifecycleStatus!=='completed');
+  const completed=all.filter(x=>x.report.lifecycleStatus==='completed');
+  document.getElementById('managementActiveCount').textContent=active.length;
+  document.getElementById('managementCompletedCount').textContent=completed.length;
+  document.getElementById('managementActiveTab').classList.toggle('active',managementTab==='active');
+  document.getElementById('managementCompletedTab').classList.toggle('active',managementTab==='completed');
+  const sortEl=document.getElementById('managementSort'); if(sortEl)sortEl.value=managementSort;
+  const rows=(managementTab==='completed'?completed:active).slice();
+  const sorters={
+    remaining:(a,b)=>b.metrics.left-a.metrics.left, spent:(a,b)=>b.metrics.spentVat-a.metrics.spentVat,
+    cpa:(a,b)=>(b.metrics.cpa||0)-(a.metrics.cpa||0), progress:(a,b)=>b.metrics.progress-a.metrics.progress,
+    pace:(a,b)=>(b.metrics.pace.available?b.metrics.pace.value:-1)-(a.metrics.pace.available?a.metrics.pace.value:-1)
+  };
+  rows.sort(sorters[managementSort]||sorters.remaining);
+  if(!rows.length){grid.innerHTML=`<div class="management-empty">${managementTab==='active'?'Нет активных опросов':'Завершённых опросов пока нет'}</div>`;return;}
+  grid.innerHTML=rows.map(({user,report:r,metrics:m})=>{
+    const progress=Math.max(0,Math.min(100,m.progress));
+    const pace=m.pace.available?`${Number(m.pace.value).toLocaleString('ru-RU',{maximumFractionDigits:2})} / ч`:'Недостаточно данных';
+    const status=r.lifecycleStatus==='completed'?'Завершён':'Работает';
+    const action=r.editable?`<button class="survey-card-action ${r.lifecycleStatus==='completed'?'reopen':''}" data-lifecycle-report="${escapeHtml(r.id)}" data-lifecycle-next="${r.lifecycleStatus==='completed'?'active':'completed'}" type="button">${r.lifecycleStatus==='completed'?'↻ Вернуть в активные':'✓ Опрос завершён'}</button>`:'';
+    return `<article class="survey-card ${r.lifecycleStatus==='completed'?'completed':''}" data-open-user="${escapeHtml(user.id)}" data-open-report="${escapeHtml(r.id)}">
+      <div class="survey-card-top"><div><span class="survey-card-owner">${escapeHtml(user.name)}</span><h3>${escapeHtml(r.title)}</h3></div><span class="survey-state ${r.lifecycleStatus==='completed'?'completed':'active'}">${status}</span></div>
+      <div class="survey-progress"><div style="width:${progress}%"></div></div><div class="survey-progress-label"><span>${percent(m.progress)}</span><span>${num(m.collected)} / ${num(m.need||0)}</span></div>
+      <div class="survey-metrics">
+        <div><span>Потрачено с НДС</span><b>${money(m.spentVat)}</b></div><div><span>Анкет собрано</span><b>${num(m.collected)}</b></div>
+        <div><span>Осталось собрать</span><b>${num(m.left)}</b></div><div><span>Конверсия клик → анкета</span><b>${percent(m.conversion)}</b></div>
+        <div><span>Цена анкеты с НДС</span><b>${m.collected?money(m.cpa):'—'}</b></div><div><span>Среднее анкет в час</span><b>${pace}</b><small>${m.pace.available?`за ${m.pace.hours.toFixed(1)} ч по снепшотам`:'нужно минимум 2 снепшота'}</small></div>
+      </div>${action}
+    </article>`;
+  }).join('');
+  grid.querySelectorAll('[data-open-report]').forEach(card=>card.onclick=e=>{if(e.target.closest('[data-lifecycle-report]'))return;openManagedReport(card.dataset.openUser,card.dataset.openReport);});
+  grid.querySelectorAll('[data-lifecycle-report]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();setReportLifecycle(btn.dataset.lifecycleReport,btn.dataset.lifecycleNext);});
+}
+
+function renderAutoAnalysis(r){
+  const box=document.getElementById('autoAnalysis'); if(!box||!r)return;
+  const vat=parseNumber(r.vat)||1.22, metrics=calculateReportMetrics(r);
+  const candidates=(r.rows||[]).map(row=>{const c=calculateRow(row,vat);return {name:String(row.social||'Без названия'),status:row.status,...c,cr:c.clicks?c.collected/c.clicks*100:0,progress:c.need?c.collected/c.need*100:0};}).filter(x=>x.clicks||x.collected||x.spentVat||x.need);
+  if(!candidates.length){box.innerHTML='<div class="analysis-empty">Автоанализ появится, когда в таблице будут первые данные.</div>';return;}
+  const good=[],risk=[],tips=[];
+  const withLeads=candidates.filter(x=>x.collected>0);
+  const withClicks=candidates.filter(x=>x.clicks>0);
+  if(withLeads.length){
+    const cheap=withLeads.slice().sort((a,b)=>a.leadPrice-b.leadPrice)[0];
+    const volume=withLeads.slice().sort((a,b)=>b.collected-a.collected)[0];
+    good.push(`${cheap.name}: лучшая цена анкеты — ${money(cheap.leadPrice)}.`);
+    if(volume.name!==cheap.name)good.push(`${volume.name}: больше всего анкет — ${num(volume.collected)}.`);
+  }
+  if(withClicks.length){const bestCr=withClicks.slice().sort((a,b)=>b.cr-a.cr)[0];if(bestCr.cr>0)good.push(`${bestCr.name}: лучшая конверсия клик → анкета — ${percent(bestCr.cr)}.`);}
+  candidates.forEach(x=>{
+    if(metrics.cpa>0&&x.collected>=3&&x.leadPrice>metrics.cpa*1.35)risk.push(`${x.name}: цена анкеты ${money(x.leadPrice)} заметно выше средней ${money(metrics.cpa)}.`);
+    if(metrics.conversion>0&&x.clicks>=20&&x.cr<metrics.conversion*.65)risk.push(`${x.name}: низкая конверсия ${percent(x.cr)} при средней ${percent(metrics.conversion)}.`);
+    if(x.status==='НЕ РАБОТАЕТ'&&x.left>0)risk.push(`${x.name}: источник не работает, но осталось собрать ${num(x.left)} анкет.`);
+  });
+  if(metrics.left>0)tips.push(`До общего плана осталось ${num(metrics.left)} анкет. Текущая стоимость анкеты — ${metrics.collected?money(metrics.cpa):'пока не рассчитана'}.`);
+  if(metrics.pace.available&&metrics.pace.value>0)tips.push(`Текущий темп — около ${metrics.pace.value.toLocaleString('ru-RU',{maximumFractionDigits:2})} анкеты/час по доступным снепшотам последних 24 часов.`);
+  else tips.push('Для расчёта темпа нужны минимум два автоснепшота с интервалом около часа.');
+  if(risk.some(x=>x.includes('цена анкеты')))tips.push('Проверь дорогие коллекторы и перераспредели бюджет в пользу источников с более низкой ценой анкеты.');
+  if(risk.some(x=>x.includes('низкая конверсия')))tips.push('На источниках с низкой конверсией стоит проверить креатив, аудиторию и соответствие объявления опросу.');
+  const block=(title,items,cls)=>`<div class="analysis-column ${cls}"><h3>${title}</h3>${items.length?`<ul>${items.slice(0,5).map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul>`:'<p>Явных сигналов пока нет.</p>'}</div>`;
+  box.innerHTML=`<div class="analysis-title"><div><span>Автоанализ</span><h2>Краткая сводка по опросу</h2></div><div class="analysis-total">${percent(metrics.progress)} плана · ${money(metrics.spentVat)} потрачено</div></div><div class="analysis-grid">${block('Что идёт хорошо',good,'good')}${block('Требует внимания',risk,'risk')}${block('Рекомендации',tips,'tips')}</div>`;
+}
+
 function render(){
   if(!appReady) return;
   renderUsers(); renderReports();
   document.getElementById('generalStatsBtn').classList.toggle('active-general',generalMode);
-  if(generalMode){ setEditorVisible(false); renderGeneralStats(); return; }
-  setEditorVisible(true);
+  document.getElementById('surveyManagementBtn')?.classList.toggle('active-management',managementMode);
+  if(managementMode){ setAppMode('management'); renderSurveyManagement(); return; }
+  if(generalMode){ setAppMode('general'); renderGeneralStats(); return; }
+  setAppMode('editor');
   const u=activeUser(), r=activeReport();
   if(!u || !r){ document.getElementById('reportTitleView').textContent='Нет доступной статистики'; document.getElementById('ownerView').textContent=u?'Пользователь: '+u.name:''; document.getElementById('tableBody').innerHTML=''; return; }
   normalizeClientReport(r); applyScale(r);
 
-  const editable=!!r.editable;
-  const editElements=['reportTitle','reportDate','vatInput','visibilitySelect','zoomSelect','addRowBtn','addColumnBtn','saveBtn','deleteReportBtn','importBackupBtn'];
+  const ownerEditable=!!r.editable;
+  const editable=canEditActiveReport(r);
+  const editElements=['reportTitle','reportDate','vatInput','visibilitySelect','zoomSelect','addRowBtn','addColumnBtn','saveBtn'];
   editElements.forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=!editable;});
-  ['deleteReportBtn','addRowBtn','addColumnBtn','saveBtn','importBackupBtn'].forEach(id=>document.getElementById(id)?.classList.toggle('hidden',!editable));
+  ['addRowBtn','addColumnBtn','saveBtn'].forEach(id=>document.getElementById(id)?.classList.toggle('hidden',!editable));
+  document.getElementById('deleteReportBtn')?.classList.toggle('hidden',!ownerEditable);
+  document.getElementById('importBackupBtn')?.classList.toggle('hidden',!ownerEditable);
+  const completeBtn=document.getElementById('toggleCompleteBtn');
+  if(completeBtn){
+    completeBtn.classList.toggle('hidden',!ownerEditable);
+    completeBtn.textContent=r.lifecycleStatus==='completed'?'↻ Вернуть в активные':'✓ Завершить опрос';
+    completeBtn.classList.toggle('reopen',r.lifecycleStatus==='completed');
+  }
 
   document.getElementById('reportTitle').value=r.title; document.getElementById('reportDate').value=r.date; document.getElementById('vatInput').value=r.vat;
-  document.getElementById('visibilitySelect').value=r.visibility; document.getElementById('zoomSelect').value=String(r.zoom||0.8);
-  document.getElementById('ownerView').textContent=`Пользователь: ${u.name} · ${r.visibility==='private'?'🔒 Приватная':'🌐 Публичная'}${editable?' · можно редактировать':' · только просмотр'}`;
+  document.getElementById('visibilitySelect').value=r.visibility; document.getElementById('zoomSelect').value=String(r.zoom||1);
+  document.getElementById('ownerView').textContent=`Пользователь: ${u.name} · ${r.visibility==='private'?'🔒 Приватная':'🌐 Публичная'}${editable?' · можно редактировать':(r.lifecycleStatus==='completed'?' · завершён':' · только просмотр')}`;
+  const lifecycleBadge=document.getElementById('lifecycleBadge');
+  if(lifecycleBadge){ lifecycleBadge.textContent=r.lifecycleStatus==='completed'?'✓ Завершён':'● Активный'; lifecycleBadge.className='lifecycle-badge '+(r.lifecycleStatus==='completed'?'completed':'active'); }
   document.getElementById('reportTitleView').textContent=r.title; document.getElementById('dateView').textContent=r.date;
 
   renderTableStructure(r,editable);
@@ -700,25 +848,26 @@ function render(){
     const customCells=(r.customColumns||[]).map(c=>{
       if(c.type==='formula'){
         const result=evaluateCustomColumn(row,r,c);
-        return `<td class="auto-cell custom-formula-cell ${result.error?'formula-error':''}" data-formula-col="${escapeHtml(c.id)}" title="${escapeHtml(result.error||c.formula||'')}">${result.error?'#ФОРМ!':formatCustomValue(result.value,c)}</td>`;
+        return `<td data-mobile-label="${escapeHtml(c.title)}" class="auto-cell custom-formula-cell ${result.error?'formula-error':''}" data-formula-col="${escapeHtml(c.id)}" title="${escapeHtml(result.error||c.formula||'')}">${result.error?'#ФОРМ!':formatCustomValue(result.value,c)}</td>`;
       }
-      return `<td><input ${dis} class="cell-input manual-input custom-manual" data-row="${i}" data-field="custom:${escapeHtml(c.id)}" value="${escapeHtml(row.customFields?.[c.id]??'')}"></td>`;
+      return `<td data-mobile-label="${escapeHtml(c.title)}"><input ${dis} class="cell-input manual-input custom-manual" data-row="${i}" data-field="custom:${escapeHtml(c.id)}" value="${escapeHtml(row.customFields?.[c.id]??'')}"></td>`;
     }).join('');
     body.innerHTML+=`<tr data-row-index="${i}">
-      <td class="sticky-col"><div class="social-cell"><span class="network-icon ${net.cls}">${net.label}</span><input ${dis} class="cell-input name-input" data-row="${i}" data-field="social" value="${escapeHtml(row.social)}"></div></td>
-      <td><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="impressions" inputmode="decimal" value="${impressions}"></td>
-      <td><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="clicks" inputmode="decimal" value="${clicks}"></td>
-      <td><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="collected" inputmode="decimal" value="${collected}"></td>
-      <td><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="spentNet" inputmode="decimal" value="${spentNet}"></td>
-      <td class="auto-cell" data-auto-field="spentVat">${money(spentVat)}</td><td class="auto-cell" data-auto-field="clickPrice">${money(clickPrice)}</td><td class="auto-cell" data-auto-field="leadPrice">${money(leadPrice)}</td><td class="auto-cell" data-auto-field="left">${num(left)}</td>
-      <td><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="need" inputmode="decimal" value="${need}"></td>
-      <td><select ${dis} class="cell-select status-select ${cls}" data-row="${i}" data-field="status">${option('РАБОТАЕТ','РАБОТАЕТ',row.status)}${option('СОБРАЛИ','СОБРАЛИ',row.status)}${option('НЕ РАБОТАЕТ','НЕ РАБОТАЕТ',row.status)}</select></td>
-      <td class="auto-cell ${rowPercent>=100?'positive':''}" data-auto-field="percent">${percent(rowPercent)}</td><td class="auto-cell gold" data-auto-field="budget">${money(budgetNeed)}</td>${customCells}<td class="no-print">${editable?`<button class="danger row-delete-btn" type="button" data-remove-row="${i}">×</button>`:''}</td></tr>`;
+      <td data-mobile-label="Коллектор" class="sticky-col"><div class="social-cell"><span class="network-icon ${net.cls}">${net.label}</span><input ${dis} class="cell-input name-input" data-row="${i}" data-field="social" value="${escapeHtml(row.social)}"></div></td>
+      <td data-mobile-label="Показы"><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="impressions" inputmode="decimal" value="${impressions}"></td>
+      <td data-mobile-label="Клики"><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="clicks" inputmode="decimal" value="${clicks}"></td>
+      <td data-mobile-label="Собрано анкет"><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="collected" inputmode="decimal" value="${collected}"></td>
+      <td data-mobile-label="Потрачено без НДС"><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="spentNet" inputmode="decimal" value="${spentNet}"></td>
+      <td data-mobile-label="Потрачено с НДС" class="auto-cell" data-auto-field="spentVat">${money(spentVat)}</td><td data-mobile-label="Стоимость клика" class="auto-cell" data-auto-field="clickPrice">${money(clickPrice)}</td><td data-mobile-label="Стоимость анкеты" class="auto-cell" data-auto-field="leadPrice">${money(leadPrice)}</td><td data-mobile-label="Осталось" class="auto-cell" data-auto-field="left">${num(left)}</td>
+      <td data-mobile-label="Всего необходимо"><input ${dis} class="cell-input manual-input" data-row="${i}" data-field="need" inputmode="decimal" value="${need}"></td>
+      <td data-mobile-label="Статус"><select ${dis} class="cell-select status-select ${cls}" data-row="${i}" data-field="status">${option('РАБОТАЕТ','РАБОТАЕТ',row.status)}${option('СОБРАЛИ','СОБРАЛИ',row.status)}${option('НЕ РАБОТАЕТ','НЕ РАБОТАЕТ',row.status)}</select></td>
+      <td data-mobile-label="Собрано, %" class="auto-cell ${rowPercent>=100?'positive':''}" data-auto-field="percent">${percent(rowPercent)}</td><td data-mobile-label="Бюджет с НДС" class="auto-cell gold" data-auto-field="budget">${money(budgetNeed)}</td>${customCells}<td data-mobile-label="Действия" class="no-print">${editable?`<button class="danger row-delete-btn" type="button" data-remove-row="${i}">×</button>`:''}</td></tr>`;
   });
   const totalPercent=totalNeed>0?totalCollected/totalNeed*100:0;
   const vals={totalImpressions:num(totalImpressions),totalClicks:num(totalClicks),totalCollected:num(totalCollected),totalSpentNet:money(totalSpentNet),totalSpentVat:money(totalSpentVat),totalClickPrice:money(totalClicks>0?totalSpentVat/totalClicks:0),totalLeadPrice:money(totalCollected>0?totalSpentVat/totalCollected:0),totalLeft:num(totalLeft),totalNeed:num(totalNeed),totalPercent:percent(totalPercent),totalBudget:money(totalBudget)};
   Object.entries(vals).forEach(([id,v])=>{const el=document.getElementById(id);if(el)el.textContent=v;});
   recalculateTotalsDom();
+  renderAutoAnalysis(r);
 }
 
 function collectorGroup(name){
@@ -783,7 +932,7 @@ function renderGeneralStats(){
 }
 
 function updateReportField(field,value){
-  const r=activeReport(); if(!r?.editable) return;
+  const r=activeReport(); if(!canEditActiveReport(r)) return;
   syncVisibleInputsToState();
   r[field]=['vat','zoom'].includes(field)?parseNumber(value):value;
   if(field==='vat'){
@@ -806,18 +955,18 @@ function updateReportField(field,value){
   }
   if(field==='visibility'){
     const u=activeUser();
-    document.getElementById('ownerView').textContent=`Пользователь: ${u?.name||''} · ${r.visibility==='private'?'🔒 Приватная':'🌐 Публичная'} · можно редактировать`;
+    document.getElementById('ownerView').textContent=`Пользователь: ${u?.name||''} · ${r.visibility==='private'?'🔒 Приватная':'🌐 Публичная'}${r.lifecycleStatus==='completed'?' · завершён':' · можно редактировать'}`;
     renderReports();
     return;
   }
 }
 function updateRow(i,field,value){ commitRowEdit(i,field,value); }
 function addRow(){
-  const r=activeReport(); if(!r?.editable) return;
+  const r=activeReport(); if(!canEditActiveReport(r)) return;
   r.rows.push({social:'Новая строка',impressions:0,clicks:0,collected:0,spentNet:0,need:0,status:'РАБОТАЕТ',customFields:{}});
   saveState(); render();
 }
-function removeRow(i){ const r=activeReport(); if(!r?.editable)return; syncVisibleInputsToState(); r.rows.splice(i,1); saveState(); render(); }
+function removeRow(i){ const r=activeReport(); if(!canEditActiveReport(r))return; syncVisibleInputsToState(); r.rows.splice(i,1); saveState(); render(); }
 
 async function addReport(){
   try{
@@ -826,7 +975,7 @@ async function addReport(){
     await initApp();
     activeUserId=window.currentAuthUser.id;
     const meUser=activeUser(); if(meUser){meUser.activeReportId=data.report.id;}
-    generalMode=false; render();
+    generalMode=false; managementMode=false; render();
   }catch(e){alert(e.message);}
 }
 async function deleteReport(){
@@ -876,7 +1025,7 @@ function getSaveMeta(reportId){
 
 function scheduleReportSave(reportId,delay=120){
   const r=findReportById(reportId);
-  if(!r?.editable)return;
+  if(!canEditActiveReport(r))return;
   const meta=getSaveMeta(reportId);
   meta.version++;
   clearTimeout(meta.timer);
@@ -885,13 +1034,13 @@ function scheduleReportSave(reportId,delay=120){
 }
 
 function saveState(){
-  const r=activeReport(); if(!r?.editable)return;
+  const r=activeReport(); if(!canEditActiveReport(r))return;
   scheduleReportSave(r.id,120);
 }
 
 async function flushReportSave(reportId,showMessage=false){
   const r=findReportById(reportId);
-  if(!r?.editable)return;
+  if(!canEditActiveReport(r))return;
 
   if(activeReport()?.id===reportId) syncVisibleInputsToState();
 
@@ -911,7 +1060,8 @@ async function flushReportSave(reportId,showMessage=false){
   const snapshot=cloneReport(r);
 
   try{
-    await appApi('saveReport',{report:snapshot});
+    const saved=await appApi('saveReport',{report:snapshot});
+    if(saved?.report){ r.snapshots=Array.isArray(saved.report.snapshots)?saved.report.snapshots:r.snapshots; r.updatedAt=saved.report.updatedAt||r.updatedAt; }
     meta.savedVersion=Math.max(meta.savedVersion,savingVersion);
     if(activeReport()?.id===reportId && meta.savedVersion>=meta.version) setAutosaveStatus('saved');
     if(meta.showMessage && meta.savedVersion>=meta.version){
@@ -932,7 +1082,7 @@ async function flushReportSave(reportId,showMessage=false){
 }
 
 async function persistActiveReport(showMessage=true){
-  const r=activeReport(); if(!r?.editable)return;
+  const r=activeReport(); if(!canEditActiveReport(r))return;
   syncVisibleInputsToState();
   const meta=getSaveMeta(r.id);
   meta.version++;
@@ -1012,8 +1162,12 @@ function bindMainEvents(){
     removeSelectedQuotaCity(btn.dataset.quotaCity);
   });
 
-  document.getElementById('userSelect').onchange=e=>{activeUserId=e.target.value;generalMode=false;const u=activeUser();if(u&&!u.activeReportId)u.activeReportId=u.reports[0]?.id||'';render();};
-  document.getElementById('generalStatsBtn').onclick=()=>{generalMode=true;render();};
+  document.getElementById('userSelect').onchange=e=>{activeUserId=e.target.value;generalMode=false;managementMode=false;const u=activeUser();if(u&&!u.activeReportId)u.activeReportId=u.reports[0]?.id||'';render();};
+  document.getElementById('generalStatsBtn').onclick=()=>{generalMode=true;managementMode=false;render();};
+  const managementBtn=document.getElementById('surveyManagementBtn');if(managementBtn)managementBtn.onclick=()=>{managementMode=true;generalMode=false;render();};
+  const activeTab=document.getElementById('managementActiveTab');if(activeTab)activeTab.onclick=()=>{managementTab='active';renderSurveyManagement();};
+  const completedTab=document.getElementById('managementCompletedTab');if(completedTab)completedTab.onclick=()=>{managementTab='completed';renderSurveyManagement();};
+  const managementSortEl=document.getElementById('managementSort');if(managementSortEl)managementSortEl.onchange=e=>{managementSort=e.target.value;renderSurveyManagement();};
   document.getElementById('addReportBtn').onclick=addReport;
   document.getElementById('addRowBtn').onclick=addRow;
   document.getElementById('addColumnBtn').onclick=addCustomColumn;
@@ -1028,6 +1182,7 @@ function bindMainEvents(){
   const openFormulaManualFromBuilder=document.getElementById('openFormulaManualFromBuilder');if(openFormulaManualFromBuilder)openFormulaManualFromBuilder.onclick=openFormulaManual;
   document.getElementById('saveBtn').onclick=()=>persistActiveReport(true);
   document.getElementById('deleteReportBtn').onclick=deleteReport;
+  const toggleCompleteBtn=document.getElementById('toggleCompleteBtn');if(toggleCompleteBtn)toggleCompleteBtn.onclick=toggleActiveReportLifecycle;
   document.getElementById('exportCsvBtn').onclick=exportCsv;
   document.getElementById('exportGeneralCsvBtn').onclick=exportGeneralCsv;
   document.getElementById('printBtn').onclick=()=>window.print();
@@ -1049,7 +1204,7 @@ window.addEventListener('oprosy-workspace-refresh',initApp);
 function flushActiveReportOnPageHide(){
   try{
     const r=activeReport();
-    if(!r?.editable)return;
+    if(!canEditActiveReport(r))return;
     syncVisibleInputsToState();
     const payload=JSON.stringify({action:'saveReport',report:r});
     fetch('/api/app',{
@@ -1336,7 +1491,7 @@ function addQuotaToMainTable(){
   if(!lastQuotaCalculation) return;
 
   const r = activeReport();
-  if(!r || !r.editable){
+  if(!r || !canEditActiveReport(r)){
     alert('Чтобы добавить квоты в таблицу, откройте свою статистику. Чужие статистики доступны только для просмотра.');
     return;
   }
