@@ -3,7 +3,7 @@ name: Release Oprosy PRO v2.8
 on:
   push:
     paths:
-      - "bootstrap/READY_V28"
+      - "bootstrap/READY_V28_RETRY"
 
 permissions:
   contents: write
@@ -22,18 +22,30 @@ jobs:
           cat bootstrap/v28.part.* | base64 --decode > /tmp/oprosy-v28.patch.xz
           echo "6d14a1be327b7141525244964d97c64f74d51a1e7f877da556d1ec8dda82fbef  /tmp/oprosy-v28.patch.xz" | sha256sum -c -
           xz -dc /tmp/oprosy-v28.patch.xz > /tmp/oprosy-v28.patch
-          git apply --check /tmp/oprosy-v28.patch
-          git apply /tmp/oprosy-v28.patch
-          rm -rf bootstrap
-          rm -f .github/workflows/bootstrap-v28.yml
+          git apply --check --directory=oprosy-pro-github-ready /tmp/oprosy-v28.patch
+          git apply --directory=oprosy-pro-github-ready /tmp/oprosy-v28.patch
+
+      - name: Flatten clean project to repository root
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/oprosy-v28-final
+          mkdir -p /tmp/oprosy-v28-final
+          cp -a oprosy-pro-github-ready/. /tmp/oprosy-v28-final/
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/oprosy-v28-final/. .
 
       - name: Validate
         shell: bash
         run: |
+          set -euo pipefail
           node --check server.js
           node --check public/assets/main-app.js
           node --check public/assets/auth-shell.js
           test "$(node -p "require('./package.json').version")" = "2.8.0"
+          test ! -e data/db.json
+          test ! -e data/.master-key
+          test ! -e OWNER_FIRST_LOGIN.txt
 
       - name: Commit release
         shell: bash
